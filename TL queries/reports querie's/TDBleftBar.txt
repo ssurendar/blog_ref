@@ -1,0 +1,92 @@
+/*** Skills Acquired  
+ClassViewId - 6ff28206-8e50-11e3-80d4-2673d3ec42cd
+ProfileId - a620eb26-8e51-11e3-80d4-2673d3ec42cd
+GroupId - 713a2095-8e50-11e3-80d4-2673d3ec42cd               
+
+Affected View’s :
+	1.dw_datamart.fact_student_assignment_response_v r
+	2.dw_datamart.dim_kg_skills_v s
+	3.dw_datamart.mdr_conf_rules_v 
+
+*/
+select distinct s.teacherfacingskill,s.standard_number_conc, r.skill_id ,(convert(decimal(10,2),a.skill_count)/convert(decimal(10,2),b.studentscount))*100 total from 
+				(select count(distinct  r.student_profile_id) skill_count,r.skill_id,r.class_view_id
+					from dw_datamart.fact_student_assignment_response_v r
+					where r.status = 'completed' group by r.class_view_id,skill_id
+				order by skill_count desc) a,
+						(select count(distinct r.student_profile_id) studentscount,skill_id,class_view_id
+							from dw_datamart.fact_student_assignment_response_v r 
+							group by r.class_view_id,skill_id ) b,
+dw_datamart.fact_student_assignment_response_v r,dw_datamart.dim_kg_skills_v s
+where r.skill_id=s.skill_id 
+and a.skill_id=s.skill_id 
+and b.skill_id=s.skill_id 
+and r.created_date >= current_date-(convert(int,(select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=4)))- convert(int, 100)
+and r.teacher_id =  'a620eb26-8e51-11e3-80d4-2673d3ec42cd'
+and r.class_view_id = '6ff28206-8e50-11e3-80d4-2673d3ec42cd'
+
+/***  Flocks Released  
+Affected View’s :
+	1.dw_datamart.fact_flocks_released_v 
+	2.dw_datamart.dim_class_view_details_v 
+	3.dw_datamart.dim_class_teachers_v 
+	4.dw_datamart.fact_skills_achievement_v 
+*/
+select case 
+				when flock_type ='small' then 'Small Flock'
+				when flock_type='medium' then 'Medium Flock'	
+				when flock_type='large' then 'Large Flock'
+			else 'Golden Flock'
+			end
+series,sum([flock_count]) FlockCount,flock_type
+from dw_datamart.fact_flocks_released_v AS FFR ,dw_datamart.dim_class_view_details_v cv,dw_datamart.dim_class_teachers_v a,dw_datamart.fact_skills_achievement_v b
+WHERE cv.class_view_reg_id=FFR.class_view_reg_id  and a.class_view_reg_id = b.class_view_reg_id
+and FFR.created_date >= current_date-convert(int,(select score_range1 from dw_datamart.mdr_conf_rules where configuration_id=4))-convert(int,100 )
+and FFR.CLASS_VIEW_reg_ID='6ff28206-8e50-11e3-80d4-2673d3ec42cd'
+and a.teacher_id= 'a620eb26-8e51-11e3-80d4-2673d3ec42cd'
+group by series,flock_type order by series desc
+
+/***   FeetTraveledPanel  
+Affected View’s :
+	1.dw_datamart.fact_feet_traveled_v 
+	2.dw_datamart.dim_student_group_v
+*/
+select
+class_avg, 
+class_total,
+created_date,
+pre_rate_change,
+(case when pre_rate_change >= 1 then 'Green' else 'Red' end) arrow
+from
+(
+		select avg(t.feet_earned) class_avg, sum(t.feet_earned) class_total, to_char(t.created_date, 'MM/DD') created_date,
+		(
+				(case when (trunc(t.created_date) between trunc((sysdate-1)-convert(int,35 ))
+				 and trunc(sysdate-1)) then count(t.student_profile_id) else 0 end)/  
+				(case when (trunc(t.created_date) between trunc((sysdate-1)-35-convert(int,35 )) 
+				and trunc((sysdate-1)-convert(int,100 )))then count(t.student_profile_id) else 1 end)
+		) pre_rate_change 
+		from dw_datamart.fact_feet_traveled_v t,
+		dw_datamart.dim_student_group_v s
+		where t.class_view_reg_id = s.class_view_reg_id
+		and t.student_profile_id = s.student_profile_id
+		and t.class_view_id = '6ff28206-8e50-11e3-80d4-2673d3ec42cd'
+		and t.teacher_id = 'a620eb26-8e51-11e3-80d4-2673d3ec42cd'
+		and s.group_id =  '713a2095-8e50-11e3-80d4-2673d3ec42cd'         
+		and (t.created_date >=trunc((sysdate-1)-35-convert(int, 35 )) and t.created_date <=trunc(sysdate-1)) 
+		group by t.created_date
+)
+
+/***   FeetTraveledPanelHeader   */
+select a.class_view_reg_id, a.total_student, count(distinct t.student_profile_id) ft_earned_student, sum(t.feet_earned) total_ft_earned
+from 
+(
+select count(distinct c.student_profile_id) total_student, c.class_view_reg_id
+from dw_datamart.dim_student_classes_v c
+group by c.class_view_reg_id) a,
+dw_datamart.fact_feet_traveled_v t
+where a.class_view_reg_id = t.class_view_reg_id
+and t.class_view_id = '6ff28206-8e50-11e3-80d4-2673d3ec42cd'
+and t.teacher_id = 'a620eb26-8e51-11e3-80d4-2673d3ec42cd'
+and t.created_date >= current_date-(convert(int,(select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=4)))- convert(int, 100  )  
+group by a.class_view_reg_id, a.total_student;

@@ -1,0 +1,160 @@
+//Panels
+/***  rptTDBSkillsAcquiredPanel  */
+select
+goal_pace_query.student_profile_id,
+(skill_grit_query.last_name || ', '||skill_grit_query.first_name) student_name,
+goal_pace_query.pace,
+skill_grit_query.skill_grit,
+(
+		case when skill_prof_query.skill_count<=8 then
+			(case 
+							when (skill_prof_query.s_expected_score < (select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Minimal'
+							when (skill_prof_query.s_expected_score >= (select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.s_expected_score < (select score_range2 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Partial'
+							when (skill_prof_query.s_expected_score >= (select score_range2 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.s_expected_score < (select score_range3 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Basic'
+						  	when (skill_prof_query.s_expected_score >= (select score_range3 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.s_expected_score < (select score_range4 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Proficient'
+							when (skill_prof_query.s_expected_score >= (select score_range4 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Advanced'     
+				else
+				'Not Mapped' 
+				end
+			) 
+		when skill_count>8 then
+			(case 
+							when (skill_prof_query.mediun_score < (select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Minimal'
+							when (skill_prof_query.mediun_score >= (select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.mediun_score < (select score_range2 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Partial'
+							when (skill_prof_query.mediun_score >= (select score_range2 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.mediun_score < (select score_range3 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Basic'
+						 	when (skill_prof_query.mediun_score >= (select score_range3 from dw_datamart.mdr_conf_rules_v where configuration_id=1) 
+							     and skill_prof_query.mediun_score < (select score_range4 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Proficient'
+							when (skill_prof_query.mediun_score >= (select score_range4 from dw_datamart.mdr_conf_rules_v where configuration_id=1)) then 'Advanced'     
+			else
+			'Not Mapped' 
+			end
+			) 
+		else
+		'Not Mapped'
+		end
+) 
+skill_proficiency
+from
+(
+	select
+	student_profile_id,
+	goal_id,
+	(
+	case when status='completed' then 'Completed'
+	when mediun_score >=1 then 'Ahead' 
+	when mediun_score =-1 then 'Behind'
+	when mediun_score =0 then 'Ontrack'
+	end 
+	) pace
+	from
+	(
+		select
+		student_profile_id,
+		goal_id,
+		status,
+		avg(
+		(
+		 case when ((mod(cnt,2) = 1 and rn = ceil(cnt/2)) 
+		      or
+		    (mod(cnt,2) = 0 and rn in (cnt/2, cnt/2+1))) then readiness_factor
+		end
+		) 
+		) mediun_score
+		from
+		(
+			select
+			fact_krf.student_profile_id,
+			fact_krf.goal_id,
+			round(fact_krf.readiness_factor) readiness_factor,
+			fact_krf.status,
+			count(fact_krf.goal_id) over (partition by fact_krf.goal_id) cnt,
+			sum(1) over (partition by fact_krf.goal_id order by fact_krf.readiness_factor  desc ROWS UNBOUNDED PRECEDING) rn
+			from dw_datamart.fact_knewton_readiness_factor_v fact_krf,
+			dw_datamart.dim_kg_goals_v dim_kg
+			where
+			dim_kg.goal_id=fact_krf.goal_id
+			and fact_krf.readiness_factor  is not null
+		)
+		group by
+		student_profile_id, 
+		goal_id,
+		status
+	)
+) goal_pace_query,
+(
+	select distinct
+	skill_id,
+	student_profile_id,
+	last_name,
+	first_name,
+	(case 
+	when (skill_grit < prof_range1)  then 'Low'
+	when (skill_grit >= prof_range1 and skill_grit < prof_range2)  then 'Medium'
+	when (skill_grit > prof_range2)  then 'High'
+	else
+	'High'
+	end
+	) skill_grit
+	from
+	(
+		select distinct
+		agg_skill.skill_id,
+		agg_skill.student_profile_id,
+		agg_skill.last_name,
+		agg_skill.first_name,
+		((agg_skill.sum_hints/decode(agg_skill.avg_hints,0,1,agg_skill.avg_hints))*(agg_skill.sum_attempts/decode(agg_skill.avg_attempts,0,1,agg_skill.avg_attempts))*(agg_skill.sum_items/decode(agg_skill.avg_items,0,1,agg_skill.avg_items))) skill_grit, 
+		(select score_range1 from dw_datamart.mdr_conf_rules_v where configuration_id=2) prof_range1,
+		(select score_range2 from dw_datamart.mdr_conf_rules_v where configuration_id=2) prof_range2
+		from
+		dw_datamart.agg_skill_grit_v agg_skill,
+		dw_datamart.dim_student_profiles_v dim_profiles
+		where dim_profiles.student_profile_id = agg_skill.student_profile_id
+	)
+) skill_grit_query,
+(
+select 
+student_profile_id,
+skill_id,
+cnt skill_count,
+s_expected_score,
+avg(
+(
+case when ((mod(cnt,2) = 1 and rn2 = ceil(cnt/2)) 
+      or
+      (mod(cnt,2) = 0 and rn2 in (cnt/2, cnt/2+1)))
+then expected_score
+end
+) 
+) mediun_score
+ from
+(
+	select
+	fact_kes.student_profile_id,
+	fact_kes.skill_id,
+	expected_score,
+	count(skill_id) over (partition by fact_kes.skill_id) cnt,
+	sum(1) over (partition BY fact_kes.skill_id ORDER BY fact_kes.expected_score DESC ROWS UNBOUNDED PRECEDING) AS rn2,
+	avg(expected_score) over (partition by fact_kes.skill_id) s_expected_score
+	from
+	dw_datamart.fact_knewton_expected_score_v fact_kes,dw_datamart.dim_group_class_view_reg_v
+	where 
+	skill_id=$P{SkillId} 
+	and fact_kes.teacher_id= $P{ProfileId} 
+	and class_view_id= $P{ClassViewId} 
+	and group_id = $P{GroupId} 
+	and (trunc(fact_kes.estimate_date) >=trunc((sysdate-1)-28-convert(int,$P{TimeRange})) and trunc(fact_kes.estimate_date) <=trunc(sysdate-1)) 
+	and nvl(expected_score,0)>0
+)
+group by
+student_profile_id,
+skill_id,
+cnt,
+s_expected_score
+) skill_prof_query
+where
+goal_pace_query.student_profile_id=skill_grit_query.student_profile_id
